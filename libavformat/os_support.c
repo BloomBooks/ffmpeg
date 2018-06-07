@@ -41,6 +41,10 @@
 #endif /* HAVE_WINSOCK2_H */
 #endif /* !HAVE_POLL_H */
 
+#ifdef __MINGW32__
+#include <winerror.h>
+#endif
+
 #include "network.h"
 
 #if !HAVE_GETADDRINFO
