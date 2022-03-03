@@ -25,6 +25,7 @@
 
 #include "audio.h"
 #include "avfilter.h"
+#include "filters.h"
 #include "internal.h"
 
 #define NBANDS 17
@@ -203,7 +204,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
         dst = (float *)s->out->extended_data[ch];
         src = (float *)in->extended_data[ch];
 
-        for (i = 0; i < s->winlen; i++)
+        for (i = 0; i < in->nb_samples; i++)
             fsamples[i] = src[i];
         for (; i < s->tabsize; i++)
             fsamples[i] = 0;
@@ -240,6 +241,28 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     return ff_filter_frame(outlink, out);
 }
 
+static int activate(AVFilterContext *ctx)
+{
+    AVFilterLink *inlink = ctx->inputs[0];
+    AVFilterLink *outlink = ctx->outputs[0];
+    SuperEqualizerContext *s = ctx->priv;
+    AVFrame *in = NULL;
+    int ret;
+
+    FF_FILTER_FORWARD_STATUS_BACK(outlink, inlink);
+
+    ret = ff_inlink_consume_samples(inlink, s->winlen, s->winlen, &in);
+    if (ret < 0)
+        return ret;
+    if (ret > 0)
+        return filter_frame(inlink, in);
+
+    FF_FILTER_FORWARD_STATUS(inlink, outlink);
+    FF_FILTER_FORWARD_WANTED(outlink, inlink);
+
+    return FFERROR_NOT_READY;
+}
+
 static av_cold int init(AVFilterContext *ctx)
 {
     SuperEqualizerContext *s = ctx->priv;
@@ -247,39 +270,10 @@ static av_cold int init(AVFilterContext *ctx)
     return equ_init(s, 14);
 }
 
-static int query_formats(AVFilterContext *ctx)
-{
-    AVFilterFormats *formats;
-    AVFilterChannelLayouts *layouts;
-    static const enum AVSampleFormat sample_fmts[] = {
-        AV_SAMPLE_FMT_FLTP,
-        AV_SAMPLE_FMT_NONE
-    };
-    int ret;
-
-    layouts = ff_all_channel_counts();
-    if (!layouts)
-        return AVERROR(ENOMEM);
-    ret = ff_set_common_channel_layouts(ctx, layouts);
-    if (ret < 0)
-        return ret;
-
-    formats = ff_make_format_list(sample_fmts);
-    if ((ret = ff_set_common_formats(ctx, formats)) < 0)
-        return ret;
-
-    formats = ff_all_samplerates();
-    return ff_set_common_samplerates(ctx, formats);
-}
-
 static int config_input(AVFilterLink *inlink)
 {
     AVFilterContext *ctx = inlink->dst;
     SuperEqualizerContext *s = ctx->priv;
-
-    inlink->partial_buf_size =
-    inlink->min_samples =
-    inlink->max_samples = s->winlen;
 
     s->out = ff_get_audio_buffer(inlink, s->tabsize);
     if (!s->out)
@@ -314,10 +308,8 @@ static const AVFilterPad superequalizer_inputs[] = {
     {
         .name         = "default",
         .type         = AVMEDIA_TYPE_AUDIO,
-        .filter_frame = filter_frame,
         .config_props = config_input,
     },
-    { NULL }
 };
 
 static const AVFilterPad superequalizer_outputs[] = {
@@ -326,7 +318,6 @@ static const AVFilterPad superequalizer_outputs[] = {
         .type         = AVMEDIA_TYPE_AUDIO,
         .config_props = config_output,
     },
-    { NULL }
 };
 
 #define AF AV_OPT_FLAG_AUDIO_PARAM|AV_OPT_FLAG_FILTERING_PARAM
@@ -356,14 +347,15 @@ static const AVOption superequalizer_options[] = {
 
 AVFILTER_DEFINE_CLASS(superequalizer);
 
-AVFilter ff_af_superequalizer = {
+const AVFilter ff_af_superequalizer = {
     .name          = "superequalizer",
     .description   = NULL_IF_CONFIG_SMALL("Apply 18 band equalization filter."),
     .priv_size     = sizeof(SuperEqualizerContext),
     .priv_class    = &superequalizer_class,
-    .query_formats = query_formats,
     .init          = init,
+    .activate      = activate,
     .uninit        = uninit,
-    .inputs        = superequalizer_inputs,
-    .outputs       = superequalizer_outputs,
+    FILTER_INPUTS(superequalizer_inputs),
+    FILTER_OUTPUTS(superequalizer_outputs),
+    FILTER_SINGLE_SAMPLEFMT(AV_SAMPLE_FMT_FLTP),
 };

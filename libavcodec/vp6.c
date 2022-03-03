@@ -167,7 +167,9 @@ static int vp6_parse_header(VP56Context *s, const uint8_t *buf, int buf_size)
         }
         if (s->use_huffman) {
             s->parse_coeff = vp6_parse_coeff_huffman;
-            init_get_bits(&s->gb, buf, buf_size<<3);
+            ret = init_get_bits8(&s->gb, buf, buf_size);
+            if (ret < 0)
+                return ret;
         } else {
             ret = ff_vp56_init_range_decoder(&s->cc, buf, buf_size);
             if (ret < 0)
@@ -194,6 +196,18 @@ static void vp6_coeff_order_table_init(VP56Context *s)
         for (pos=1; pos<64; pos++)
             if (s->modelp->coeff_reorder[pos] == i)
                 s->modelp->coeff_index_to_pos[idx++] = pos;
+
+    for (idx = 0; idx < 64; idx++) {
+        int max = 0;
+        for (i = 0; i <= idx; i++) {
+            int v = s->modelp->coeff_index_to_pos[i];
+            if (v > max)
+                max = v;
+        }
+        if (s->sub_version > 6)
+            max++;
+        s->modelp->coeff_index_to_idct_selector[idx] = max;
+    }
 }
 
 static void vp6_default_models_init(VP56Context *s)
@@ -446,6 +460,7 @@ static int vp6_parse_coeff_huffman(VP56Context *s)
             cg = FFMIN(vp6_coeff_groups[coeff_idx], 3);
             vlc_coeff = &s->ract_vlc[pt][ct][cg];
         }
+        s->idct_selector[b] = model->coeff_index_to_idct_selector[FFMIN(coeff_idx, 63)];
     }
     return 0;
 }
@@ -460,7 +475,7 @@ static int vp6_parse_coeff(VP56Context *s)
     int b, i, cg, idx, ctx;
     int pt = 0;    /* plane type (0 for Y, 1 for U or V) */
 
-    if (c->end <= c->buffer && c->bits >= 0) {
+    if (vpX_rac_is_end(c)) {
         av_log(s->avctx, AV_LOG_ERROR, "End of AC stream reached in vp6_parse_coeff\n");
         return AVERROR_INVALIDDATA;
     }
@@ -527,6 +542,7 @@ static int vp6_parse_coeff(VP56Context *s)
 
         s->left_block[ff_vp56_b6to4[b]].not_null_dc =
         s->above_blocks[s->above_block_idx[b]].not_null_dc = !!s->block_coeff[b][0];
+        s->idct_selector[b] = model->coeff_index_to_idct_selector[FFMIN(coeff_idx, 63)];
     }
     return 0;
 }
@@ -689,7 +705,7 @@ static av_cold void vp6_decode_free_context(VP56Context *s)
     }
 }
 
-AVCodec ff_vp6_decoder = {
+const AVCodec ff_vp6_decoder = {
     .name           = "vp6",
     .long_name      = NULL_IF_CONFIG_SMALL("On2 VP6"),
     .type           = AVMEDIA_TYPE_VIDEO,
@@ -702,7 +718,7 @@ AVCodec ff_vp6_decoder = {
 };
 
 /* flash version, not flipped upside-down */
-AVCodec ff_vp6f_decoder = {
+const AVCodec ff_vp6f_decoder = {
     .name           = "vp6f",
     .long_name      = NULL_IF_CONFIG_SMALL("On2 VP6 (Flash version)"),
     .type           = AVMEDIA_TYPE_VIDEO,
@@ -715,7 +731,7 @@ AVCodec ff_vp6f_decoder = {
 };
 
 /* flash version, not flipped upside-down, with alpha channel */
-AVCodec ff_vp6a_decoder = {
+const AVCodec ff_vp6a_decoder = {
     .name           = "vp6a",
     .long_name      = NULL_IF_CONFIG_SMALL("On2 VP6 (Flash version, with alpha channel)"),
     .type           = AVMEDIA_TYPE_VIDEO,
